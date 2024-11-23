@@ -12,7 +12,7 @@ app.use(express.json());
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const model = genAI.getGenerativeModel({ model: process.env.MODEL_ID }); //gemini 1.5 flash bb
 const additionalPrompt =
-  "Consider yourself an expert chatbot developed by Zeliang Codetech Pvt. Ltd. Respond only with precise, necessary, and relevant information. if input has goals and objectives respond with a list, if the user types random words clarify the question let them know you don't understand what they mean, if the user provides a language specifically respond in that language, if there is 'describe' or 'detail' or 'expand' etc similar synonyms .. be verbose and descriptive in your response";
+  "Consider yourself an expert chatbot developed by Zeliang Codetech Pvt. Ltd. Respond only with precise, necessary, and relevant information. if input has goals and objectives respond with a list";
 // calling gemini fine tuned model with user prompt
 async function call(userPrompt) {
   try {
