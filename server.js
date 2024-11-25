@@ -1,3 +1,5 @@
+const WebSocket = require("ws");
+const http = require("http");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 require("dotenv").config();
 const express = require("express");
@@ -8,66 +10,106 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// cofig for Gemini
+// HTTP server to combine Express and WebSocket
+const server = http.createServer(app);
+
+// WebSocket server
+const wss = new WebSocket.Server({ server });
+
+// config for Gemini
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const model = genAI.getGenerativeModel({ model: process.env.MODEL_ID }); //gemini 1.5 flash bb
+const model = genAI.getGenerativeModel({ model: process.env.MODEL_ID });
 const additionalPrompt =
   "Consider yourself an expert chatbot developed by Zeliang Codetech Pvt. Ltd. Respond only with precise, necessary, and relevant information. if input has goals and objectives respond with a list";
-// calling gemini fine tuned model with user prompt
-async function call(userPrompt) {
-  try {
-    const ans = await model.generateContent(userPrompt + additionalPrompt);
 
-    // Extract the generated text
-    const responseText = await ans.response.text(); // call the text function to get the text content
-    console.log(responseText);
-    return responseText; // Output the text
+// async generator function that stream text chunks to the client
+async function* streamResponse(prompt) {
+  try {
+    const result = await model.streamGenerateContent(prompt + additionalPrompt);
+
+    // for await of : is a for loop used to iterate over chunks
+    for await (const chunk of result.stream) {
+      const chunkText = chunk.text();
+      console.log(chunkText)
+      if (chunkText) {
+        yield chunkText; //yield pauses the the function and awaits the next chuck
+      }
+    }
   } catch (error) {
-    console.error("Error generating content:", error);
+    console.error("Error in stream generation:", error);
+    throw error;
   }
 }
+
+// Handle WebSocket connections
+wss.on("connection", (ws) => {
+  console.log("New WebSocket connection established.");
+
+  // onmessage from the client
+  ws.on("message", async (message) => {
+    try {
+      const { prompt } = JSON.parse(message);
+      console.log(`user sends prompt ${prompt}`)
+      if (!prompt) {
+        ws.send(
+          JSON.stringify({
+            success: false,
+            error: "Prompt is required.",
+          })
+        );
+        return;
+      }
+
+      // Stream the response
+      try {
+        for await (const chunk of streamResponse(prompt)) {
+          console.log(chunk)
+          ws.send(
+            JSON.stringify({
+              success: true,
+              data: chunk,
+              isComplete: false,
+            })
+          );
+        }
+
+        // Send completion message
+        ws.send(
+          JSON.stringify({
+            success: true,
+            isComplete: true,
+          })
+        );
+      } catch (error) {
+        ws.send(
+          JSON.stringify({
+            success: false,
+            error: error.message || "Failed to stream response",
+          })
+        );
+      }
+    } catch (error) {
+      console.error("WebSocket Error:", error);
+      ws.send(
+        JSON.stringify({
+          success: false,
+          error: error.message || "Failed to process prompt.",
+        })
+      );
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("WebSocket connection closed.");
+  });
+});
 
 app.get("/", (req, res) => {
   return res.status(200).json({ Message: "SGDMS backend is working fine" });
 });
 
-app.post("/prompt", async (req, res) => {
-  const { prompt } = req.body;
-
-  // Input validation
-  if (!prompt) {
-    return res.status(400).json({
-      success: false,
-      error: "Prompt is required",
-    });
-  }
-
-  try {
-    var response = await call(prompt);
-
-    if (!response) {
-      throw new Error("No response received from prompt service");
-    }
-
-    res.status(200).json({
-      success: true,
-      data: response,
-    });
-  } catch (error) {
-    console.error("Error processing prompt:", error);
-
-    // Determine appropriate status code
-    const statusCode = error.statusCode || 500;
-
-    res.status(statusCode).json({
-      success: false,
-      error: error.message || "Failed to process prompt",
-      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
-
-app.listen(process.env.PORT, "0.0.0.0", () => {
-  console.log(`SGDMS AI port is running on PORT ${process.env.PORT}`);
+// Start the server
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
